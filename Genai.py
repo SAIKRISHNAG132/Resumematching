@@ -30,24 +30,24 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 s3_client = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_KEY)
 
 # MongoDB connection
-MONGO_URI = "mongodb+srv://krishnasai:krishna132@cluster0.wjww1.mongodb.net/"
-#MONGO_URI="mongodb+srv://testing_udbhavx:UdbhavX@12@udbhavx.2kzuc.mongodb.net/"
+MONGO_URI="mongodb+srv://testing_udbhavx:UdbhavX@udbhavx.2kzuc.mongodb.net/"
 
 client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
-db = client['job_matching']
-resumes_collection = db['resumes']  
+db = client['test']
+resume_collection = db['resume']  
 
 COHERE_EMBEDDING_MODEL = 'embed-english-v3.0'
 
 # FastAPI instance
 app = FastAPI()
 
+@app.get("/")
+def read_root():
+    return {"message": "FastAPI is running!"}
+
 # ------------------ S3 Functions ------------------
 
 def upload_to_s3(file_content: bytes, file_name: str) -> str:
-    """
-    Uploads a file to Amazon S3 and returns the S3 URL.
-    """
     try:
         s3_client.put_object(Bucket=S3_BUCKET_NAME, Key=file_name, Body=file_content)
         return f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{file_name}"
@@ -55,9 +55,6 @@ def upload_to_s3(file_content: bytes, file_name: str) -> str:
         raise HTTPException(status_code=500, detail=f"Failed to upload to S3: {e}")
 
 def get_resume_from_s3(file_name: str) -> bytes:
-    """
-    Retrieves a file from Amazon S3.
-    """
     try:
         response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=file_name)
         return response['Body'].read()
@@ -67,9 +64,6 @@ def get_resume_from_s3(file_name: str) -> bytes:
 # ------------------ Cohere & Gemini Functions ------------------
 
 def fetch_embeddings(texts: List[str], embedding_type: str = 'search_document') -> List[List[float]]:
-    """
-    Fetches text embeddings using Cohere API.
-    """
     try:
         results = co.embed(
             texts=texts,
@@ -81,9 +75,6 @@ def fetch_embeddings(texts: List[str], embedding_type: str = 'search_document') 
         raise HTTPException(status_code=500, detail=f"Cohere embedding fetch failed: {e}")
 
 def synthesize_answer(question: str, context: List[str]) -> str:
-    """
-    Uses Gemini AI to extract experience & skills from resume text.
-    """
     context_str = '\n'.join(context)
     prompt = f"""
     Extract ONLY the total years of experience and list of skills from the following document.
@@ -107,31 +98,20 @@ def synthesize_answer(question: str, context: List[str]) -> str:
 
 @app.post("/extract-experience-skills/")
 async def extract_experience_skills(file: UploadFile = File(...)):
-    """
-    Handles resume uploads, extracts experience & skills, and stores data in MongoDB.
-    """
     try:
         file_extension = file.filename.split('.')[-1].lower()
         file_content = await file.read()
 
-        # Debug: Print file extension and content length
-        print(f"Received file with extension: {file_extension}")
-        print(f"File content length: {len(file_content)} bytes")
+        s3_file_path = f"resume/{file.filename}"
 
-        s3_file_path = f"resumes/{file.filename}"
-
-        # Check if the resume is already uploaded
-        existing_doc = resumes_collection.find_one({"file_name": file.filename})
+        existing_doc = resume_collection.find_one({"file_name": file.filename})
         if existing_doc:
-            # Fetch resume from S3 instead of re-uploading
             file_content = get_resume_from_s3(s3_file_path)
             print(" Using existing resume from S3")
         else:
-            # Upload to S3 and save path in MongoDB
             s3_url = upload_to_s3(file_content, s3_file_path)
             print("New resume uploaded to S3")
 
-        # Extract text from resume
         texts = []
         if file_extension == 'pdf':
             doc = fitz.open(stream=file_content, filetype='pdf')
@@ -144,16 +124,8 @@ async def extract_experience_skills(file: UploadFile = File(...)):
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        # Debug: Print extracted text
-        print(f"Extracted {len(texts)} pages/paragraphs from the document.")
-
-        # Extract experience & skills using Gemini AI
         answer = synthesize_answer("Extract total years of experience and skills.", texts)
 
-        # Debug: Print the answer from Gemini
-        print(f"Gemini response: {answer}")
-
-        # Process extracted data
         experience_match = None
         skills_match = None
         if "Years of Experience:" in answer:
@@ -161,15 +133,9 @@ async def extract_experience_skills(file: UploadFile = File(...)):
         if "Skills:" in answer:
             skills_match = answer.split("Skills:")[1].strip()
 
-        # Debug: Print experience and skills
-        print(f"Experience: {experience_match}")
-        print(f"Skills: {skills_match}")
-
-        # Generate embeddings for text content
         text = "\n".join(texts)
         embeddings = fetch_embeddings([text])
 
-        # Prepare document data for MongoDB
         resume_data = {
             "file_name": file.filename,
             "s3_url": f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{s3_file_path}",
@@ -180,17 +146,16 @@ async def extract_experience_skills(file: UploadFile = File(...)):
             "uploaded_at": datetime.datetime.utcnow()
         }
 
-        # Insert or update document in MongoDB
         if existing_doc:
-            resumes_collection.update_one({"file_name": file.filename}, {"$set": resume_data})
+            resume_collection.update_one({"file_name": file.filename}, {"$set": resume_data})
             print(" Updated existing record in MongoDB")
         else:
-            resumes_collection.insert_one(resume_data)
+            resume_collection.insert_one(resume_data)
             print(" New record inserted in MongoDB")
 
         return JSONResponse(content={"document_id": file.filename, "answer": answer})
 
     except Exception as e:
-        # Log the full exception for debugging
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing the document: {e}")
+
