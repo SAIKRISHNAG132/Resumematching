@@ -19,11 +19,16 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 co = cohere.Client(api_key=COHERE_API_KEY)
 
 # MongoDB Connection
-client = pymongo.MongoClient("mongodb+srv://krishnasai:krishna132@cluster0.wjww1.mongodb.net/")
-db = client["job_matching"]
-jobs_collection = db["jobs"]
+#client = pymongo.MongoClient("mongodb+srv://krishnasai:krishna132@cluster0.wjww1.mongodb.net/")
+client = pymongo.MongoClient("mongodb+srv://testing_udbhavx:UdbhavX@udbhavx.2kzuc.mongodb.net/")
+db = client["test"]
+jobs_collection = db["job_description"]
 # FastAPI Instance
 app = FastAPI()
+@app.get("/")
+def home():
+    return {"message": "FastAPI server is running!"}
+
 
 def extract_text_from_file(file_content: bytes, file_extension: str) -> str:
     """Extracts text from PDF, DOCX, and TXT files."""
